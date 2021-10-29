@@ -24,7 +24,13 @@ const initialState: {
   photos: Record<PhotoId, { id: PhotoId; createdAt: number; clicks: number }>;
 } = {
   count: 0,
-  photos: {}
+  photos: {
+    photoFixed: {
+      id: 'photoFixed',
+      createdAt: 0,
+      clicks: 999
+    }
+  }
 };
 const stateProxy = proxyWithPersist({
   name: 'app',
@@ -33,11 +39,11 @@ const stateProxy = proxyWithPersist({
     maxWait: 1000
   }),
   version: 0,
-  persistStrategies: PersistStrategy.SingleFile,
-  // persistStrategies: {
-  //   count: PersistStrategy.SingleFile,
-  //   photos: PersistStrategy.MultiFile
-  // },
+  // persistStrategies: PersistStrategy.SingleFile,
+  persistStrategies: {
+    count: PersistStrategy.SingleFile,
+    photos: PersistStrategy.MultiFile
+  },
   initialState,
   migrate: {}
 });

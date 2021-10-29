@@ -1,4 +1,4 @@
-import { get, omit, set, toPath } from 'lodash';
+import { get, isPlainObject, omit, set, toPath } from 'lodash';
 import { proxy, snapshot, subscribe } from 'valtio';
 import { subscribeKey } from 'valtio/utils';
 
@@ -136,9 +136,10 @@ export default function proxyWithPersist<S extends object>(
         const pathStart = pathParts.slice(0, -1).join('');
         const pathKey = pathParts.slice(-1)[0];
 
-        const proxySubObject = isPersistingMainObject
-          ? proxyObject
-          : get(proxyObject, pathStart);
+        const proxySubObject =
+          isPersistingMainObject || pathStart === ''
+            ? proxyObject
+            : get(proxyObject, pathStart);
 
         if (strategy === PersistStrategy.SingleFile) {
           const persistedString = await inputs.getStorage().getItem(filePath);
@@ -151,13 +152,22 @@ export default function proxyWithPersist<S extends object>(
             if (isPersistingMainObject) {
               Object.assign(proxyObject, persistedValue);
             } else {
-              set(proxyObject, path, persistedValue);
+              const target = get(proxyObject, path);
+              if (isPlainObject(target) && isPlainObject(persistedValue)) {
+                Object.assign(target, persistedValue);
+              } else {
+                set(proxyObject, path, persistedValue);
+              }
             }
           }
 
           const persistPath = (value: any) => {
-            pendingWrites[filePath] =
-              typeof value === 'object' ? snapshot(value) : value;
+            const target =
+              value && typeof value === 'object' ? snapshot(value) : value;
+            pendingWrites[filePath] = target;
+            if (isPersistingMainObject) {
+              pendingWrites[filePath] = omit(target, '_persist');
+            }
             onBeforeBulkWrite(bulkWrite);
           };
 
@@ -170,6 +180,7 @@ export default function proxyWithPersist<S extends object>(
               persistPath(proxyObject);
             });
           } else {
+            console.log({ proxySubObject, pathKey });
             subscribeKey(proxySubObject, pathKey, persistPath);
           }
         } else if (strategy === PersistStrategy.MultiFile) {
@@ -211,11 +222,18 @@ export default function proxyWithPersist<S extends object>(
                 console.log('persistedString:', persistedString);
 
                 const persistedValue = JSON.parse(persistedString);
-                set(
-                  proxyObject,
-                  persistedFilePath.substring(inputs.name.length + '-'.length),
-                  persistedValue
+
+                // persistedFilePath has the inputs.name prefix and "-" so get
+                // the dot path that starts after this.
+                const path = persistedFilePath.substring(
+                  inputs.name.length + '-'.length
                 );
+                const target = get(proxyObject, path);
+                if (isPlainObject(target) && isPlainObject(persistedValue)) {
+                  Object.assign(target, persistedValue);
+                } else {
+                  set(proxyObject, path, persistedValue);
+                }
               })
           );
 
