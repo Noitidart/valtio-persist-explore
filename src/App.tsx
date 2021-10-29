@@ -33,10 +33,11 @@ const stateProxy = proxyWithPersist({
     maxWait: 1000
   }),
   version: 0,
-  persistPaths: {
-    count: PersistStrategy.SingleFile,
-    photos: PersistStrategy.MultiFile
-  },
+  persistStrategies: PersistStrategy.SingleFile,
+  // persistStrategies: {
+  //   count: PersistStrategy.SingleFile,
+  //   photos: PersistStrategy.MultiFile
+  // },
   initialState,
   migrate: {}
 });
@@ -57,7 +58,8 @@ function App() {
         <a
           className="App-link"
           href="#"
-          onClick={() => {
+          onClick={e => {
+            e.preventDefault();
             stateProxy.count++;
           }}
         >
@@ -66,7 +68,8 @@ function App() {
         <a
           className="App-link"
           href="#"
-          onClick={() => {
+          onClick={e => {
+            e.preventDefault();
             stateProxy.count--;
           }}
         >
@@ -75,7 +78,8 @@ function App() {
         <a
           className="App-link"
           href="#"
-          onClick={() => {
+          onClick={e => {
+            e.preventDefault();
             let photoId = uniqueId('photo');
             while (photoId in stateProxy.photos) {
               photoId = uniqueId('photo');

@@ -1,4 +1,4 @@
-import { get, set, toPath } from 'lodash';
+import { get, omit, set, toPath } from 'lodash';
 import { proxy, snapshot, subscribe } from 'valtio';
 import { subscribeKey } from 'valtio/utils';
 
@@ -26,9 +26,11 @@ interface IProxyWithPersistInputs<S extends object> {
   name: string;
   version: number;
   getStorage: () => ProxyPersistStorageEngine;
-  persistPaths: {
-    [key: string]: PersistStrategy;
-  };
+  persistStrategies:
+    | PersistStrategy
+    | {
+        [key: string]: PersistStrategy;
+      };
   migrate: {
     [key: number]: () => null;
   };
@@ -113,25 +115,30 @@ export default function proxyWithPersist<S extends object>(
     inputs.onBeforeBulkWrite || (bulkWrite => bulkWrite());
 
   (async function () {
-    const allKeys = Object.values(inputs.persistPaths).includes(
-      PersistStrategy.MultiFile
-    )
-      ? await inputs.getStorage().getAllKeys()
-      : [];
+    const allKeys =
+      inputs.persistStrategies === PersistStrategy.MultiFile ||
+      Object.values(inputs.persistStrategies).includes(
+        PersistStrategy.MultiFile
+      )
+        ? await inputs.getStorage().getAllKeys()
+        : [];
 
     await Promise.all(
-      Object.entries(inputs.persistPaths).map(async function loadPath([
-        path,
-        strategy
-      ]) {
+      Object.entries(
+        typeof inputs.persistStrategies === 'string'
+          ? { '': inputs.persistStrategies }
+          : inputs.persistStrategies
+      ).map(async function loadPath([path, strategy]) {
+        const isPersistingMainObject = path === '';
         const filePath = inputs.name + '-' + path;
 
         const pathParts = toPath(path);
         const pathStart = pathParts.slice(0, -1).join('');
         const pathKey = pathParts.slice(-1)[0];
 
-        const proxySubObject =
-          pathStart === '' ? proxyObject : get(proxyObject, pathStart);
+        const proxySubObject = isPersistingMainObject
+          ? proxyObject
+          : get(proxyObject, pathStart);
 
         if (strategy === PersistStrategy.SingleFile) {
           const persistedString = await inputs.getStorage().getItem(filePath);
@@ -141,7 +148,11 @@ export default function proxyWithPersist<S extends object>(
             // file does not exist
           } else {
             const persistedValue = JSON.parse(persistedString);
-            set(proxyObject, path, persistedValue);
+            if (isPersistingMainObject) {
+              Object.assign(proxyObject, persistedValue);
+            } else {
+              set(proxyObject, path, persistedValue);
+            }
           }
 
           const persistPath = (value: any) => {
@@ -150,24 +161,51 @@ export default function proxyWithPersist<S extends object>(
             onBeforeBulkWrite(bulkWrite);
           };
 
-          if (pathKey === undefined) {
-            subscribe(proxyObject, persistPath);
+          if (isPersistingMainObject) {
+            subscribe(proxyObject, ops => {
+              if (ops.every(op => op[1][0] === '_persist')) {
+                console.log('all are _persist, dont persist');
+                return;
+              }
+              persistPath(proxyObject);
+            });
           } else {
             subscribeKey(proxySubObject, pathKey, persistPath);
           }
         } else if (strategy === PersistStrategy.MultiFile) {
           await Promise.all(
-            allKeys.map(async leafPath => {
-              if (
-                leafPath.startsWith(inputs.name + '-') &&
-                toPath(leafPath).slice(0, -1).join('.') === filePath
-              ) {
+            allKeys
+              .filter(persistedFilePath => {
+                return persistedFilePath.startsWith(inputs.name + '-');
+              })
+              .filter(persistedFilePath => {
+                if (isPersistingMainObject) {
+                  console.log(
+                    'is filePath:',
+                    filePath,
+                    'vs',
+                    persistedFilePath
+                  );
+                  return persistedFilePath.split('-')[0] === inputs.name;
+                } else {
+                  return (
+                    toPath(persistedFilePath).slice(0, -1).join('.') ===
+                    filePath
+                  );
+                }
+              })
+              .map(async persistedFilePath => {
+                console.log('persistedFilePath:', persistedFilePath, {
+                  toPath: toPath(persistedFilePath),
+                  sliced: toPath(persistedFilePath).slice(0, -1)
+                });
+
                 const persistedString = await inputs
                   .getStorage()
-                  .getItem(leafPath);
+                  .getItem(persistedFilePath);
                 if (persistedString === null) {
                   throw new Error(
-                    `Could not find file for leafPath found of "${leafPath}", this should not be possible as this was returned by inputs.getStorage().getAllKeys`
+                    `Could not find file for leafPath found of "${persistedFilePath}", this should not be possible as this was returned by inputs.getStorage().getAllKeys`
                   );
                 }
                 console.log('persistedString:', persistedString);
@@ -175,20 +213,21 @@ export default function proxyWithPersist<S extends object>(
                 const persistedValue = JSON.parse(persistedString);
                 set(
                   proxyObject,
-                  leafPath.substring(inputs.name.length + '-'.length),
+                  persistedFilePath.substring(inputs.name.length + '-'.length),
                   persistedValue
                 );
-              }
-            })
+              })
           );
 
-          let prevValue =
-            pathKey === undefined
-              ? snapshot(proxyObject)
-              : snapshot(proxySubObject[pathKey]);
+          let prevValue = isPersistingMainObject
+            ? omit(snapshot(proxyObject) as object, '_persist')
+            : snapshot(proxySubObject[pathKey]);
 
           const persistLeaf = (valueProxy: any) => {
-            const value = snapshot(valueProxy);
+            let value = snapshot(valueProxy);
+            if (isPersistingMainObject) {
+              value = omit(value, '_persist');
+            }
             // figured out which subkeys were added, removed, changed
             const keys = new Set(Object.keys(value));
             const prevKeys = new Set(Object.keys(prevValue));
@@ -220,10 +259,9 @@ export default function proxyWithPersist<S extends object>(
               }
             });
 
-            prevValue =
-              pathKey === undefined
-                ? snapshot(proxyObject)
-                : snapshot(proxySubObject[pathKey]);
+            prevValue = isPersistingMainObject
+              ? omit(snapshot(proxyObject) as object, '_persist')
+              : snapshot(proxySubObject[pathKey]);
 
             if (addedKeys.length || removedKeys.length || updatedKeys.length) {
               console.log(
@@ -231,18 +269,28 @@ export default function proxyWithPersist<S extends object>(
               );
 
               removedKeys.forEach(key => {
-                pendingWrites[filePath + '.' + key] = null;
+                pendingWrites[
+                  filePath + (isPersistingMainObject ? '' : '.') + key
+                ] = null;
               });
 
               [...addedKeys, ...updatedKeys].forEach(key => {
-                pendingWrites[filePath + '.' + key] = value[key];
+                pendingWrites[
+                  filePath + (isPersistingMainObject ? '' : '.') + key
+                ] = value[key];
               });
 
               onBeforeBulkWrite(bulkWrite);
             }
           };
-          if (pathKey === undefined) {
-            subscribe(proxyObject, persistLeaf);
+          if (isPersistingMainObject) {
+            subscribe(proxyObject, function (ops) {
+              if (ops.every(op => op[1][0] === '_persist')) {
+                console.log('all are _persist, dont persist');
+                return;
+              }
+              persistLeaf(proxyObject);
+            });
           } else {
             subscribeKey(proxySubObject, pathKey, persistLeaf);
           }
