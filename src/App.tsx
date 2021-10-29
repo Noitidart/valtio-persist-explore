@@ -1,9 +1,10 @@
 import './App.css';
 
-import { uniqueId } from 'lodash';
+import { debounce, uniqueId } from 'lodash';
 import { useSnapshot } from 'valtio';
 
 import proxyWithPersist, {
+  PersistStrategy,
   ProxyPersistStorageEngine,
 } from './proxyWithPersist';
 
@@ -28,11 +29,13 @@ const initialState: {
 const stateProxy = proxyWithPersist({
   name: 'app',
   getStorage: () => storage,
-  // onBeforeWrite: debounce(write => write(), 1000, { maxWait: 1000 }),
+  onBeforeBulkWrite: debounce(bulkWrite => bulkWrite(), 1000, {
+    maxWait: 1000
+  }),
   version: 0,
   persistPaths: {
-    count: 'single',
-    photos: 'multi'
+    count: PersistStrategy.SingleFile,
+    photos: PersistStrategy.MultiFile
   },
   initialState,
   migrate: {}

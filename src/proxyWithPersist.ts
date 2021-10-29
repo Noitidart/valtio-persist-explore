@@ -1,5 +1,5 @@
 import { get, set, toPath } from 'lodash';
-import { proxy, snapshot } from 'valtio';
+import { proxy, snapshot, subscribe } from 'valtio';
 import { subscribeKey } from 'valtio/utils';
 
 export type ProxyPersistStorageEngine = {
@@ -12,8 +12,14 @@ export type ProxyPersistStorageEngine = {
 };
 
 // "multi" only works for object type.
-type PersistTechnique = 'single' | 'multi';
+export enum PersistStrategy {
+  SingleFile = 'SingleFile',
+  MultiFile = 'MultiFile'
+}
+
 type Write = () => ReturnType<ProxyPersistStorageEngine['setItem']>;
+type BulkWrite = () => Promise<Array<ReturnType<Write>>>;
+type OnBeforeBulkWrite = (bulkWrite: BulkWrite) => void;
 type OnBeforeWrite = (write: Write, path: string) => void;
 
 interface IProxyWithPersistInputs<S extends object> {
@@ -21,12 +27,13 @@ interface IProxyWithPersistInputs<S extends object> {
   version: number;
   getStorage: () => ProxyPersistStorageEngine;
   persistPaths: {
-    [key: string]: PersistTechnique;
+    [key: string]: PersistStrategy;
   };
   migrate: {
     [key: number]: () => null;
   };
   onBeforeWrite?: OnBeforeWrite;
+  onBeforeBulkWrite?: OnBeforeBulkWrite;
   initialState: S;
 }
 
@@ -57,7 +64,6 @@ type IPersistedState<State extends object> = {
   );
 };
 
-let allKeysPromise: Promise<string[]>;
 export default function proxyWithPersist<S extends object>(
   inputs: IProxyWithPersistInputs<S>
 ) {
@@ -75,20 +81,48 @@ export default function proxyWithPersist<S extends object>(
     }
   });
 
+  // key is path, value is un-stringified value. stringify happens at time of write
+  const pendingWrites: Record<string, any> = {};
+
+  const bulkWrite = () =>
+    Promise.all(
+      Object.entries(pendingWrites).map(([filePath, value]) => {
+        // TODO: if removeItem/setItem fails, and pendingWrites doesn't include
+        // filePath, then restore this. if it includes it on error, it means
+        // another write/delete got queued up, and that takes precedence.
+        delete pendingWrites[filePath];
+
+        let write: Write;
+        if (value === null) {
+          // delete it
+          write = () => {
+            console.log('deleting filePath:', filePath);
+            return inputs.getStorage().removeItem(filePath);
+          };
+        } else {
+          write = () => {
+            console.log('writing filePath:', filePath, 'value:', value);
+            return inputs.getStorage().setItem(filePath, JSON.stringify(value));
+          };
+        }
+        return onBeforeWrite(write, filePath);
+      })
+    );
+
+  const onBeforeBulkWrite: OnBeforeBulkWrite =
+    inputs.onBeforeBulkWrite || (bulkWrite => bulkWrite());
+
   (async function () {
-    if (!allKeysPromise) {
-      allKeysPromise = new Promise(async resolve => {
-        const allKeys = inputs.getStorage().getAllKeys();
-        resolve(allKeys);
-      });
-    }
-    const allKeys = await allKeysPromise;
-    console.log('allKeys:', allKeys);
+    const allKeys = Object.values(inputs.persistPaths).includes(
+      PersistStrategy.MultiFile
+    )
+      ? await inputs.getStorage().getAllKeys()
+      : [];
 
     await Promise.all(
       Object.entries(inputs.persistPaths).map(async function loadPath([
         path,
-        technique
+        strategy
       ]) {
         const filePath = inputs.name + '-' + path;
 
@@ -99,7 +133,7 @@ export default function proxyWithPersist<S extends object>(
         const proxySubObject =
           pathStart === '' ? proxyObject : get(proxyObject, pathStart);
 
-        if (technique === 'single') {
+        if (strategy === PersistStrategy.SingleFile) {
           const persistedString = await inputs.getStorage().getItem(filePath);
           console.log('persistedString:', persistedString);
 
@@ -110,19 +144,18 @@ export default function proxyWithPersist<S extends object>(
             set(proxyObject, path, persistedValue);
           }
 
-          subscribeKey(proxySubObject, pathKey, function persistPath(value) {
-            const write: Write = () => {
-              console.log(
-                'path changed persist it, path:',
-                path,
-                'value:',
-                value
-              );
-              inputs.getStorage().setItem(filePath, JSON.stringify(value));
-            };
-            onBeforeWrite(write, path);
-          });
-        } else if (technique === 'multi') {
+          const persistPath = (value: any) => {
+            pendingWrites[filePath] =
+              typeof value === 'object' ? snapshot(value) : value;
+            onBeforeBulkWrite(bulkWrite);
+          };
+
+          if (pathKey === undefined) {
+            subscribe(proxyObject, persistPath);
+          } else {
+            subscribeKey(proxySubObject, pathKey, persistPath);
+          }
+        } else if (strategy === PersistStrategy.MultiFile) {
           await Promise.all(
             allKeys.map(async leafPath => {
               if (
@@ -149,86 +182,73 @@ export default function proxyWithPersist<S extends object>(
             })
           );
 
-          let prevValue = snapshot(proxySubObject[pathKey]);
-          subscribeKey(
-            proxySubObject,
-            pathKey,
-            function persistLeaf(value, ...args) {
-              // figured out which subkeys were added, removed, changed
-              const keys = new Set(Object.keys(value));
-              const prevKeys = new Set(Object.keys(prevValue));
+          let prevValue =
+            pathKey === undefined
+              ? snapshot(proxyObject)
+              : snapshot(proxySubObject[pathKey]);
 
-              const possiblyUpdatedKeys = new Set(Object.keys(value));
+          const persistLeaf = (valueProxy: any) => {
+            const value = snapshot(valueProxy);
+            // figured out which subkeys were added, removed, changed
+            const keys = new Set(Object.keys(value));
+            const prevKeys = new Set(Object.keys(prevValue));
 
-              const addedKeys: string[] = [];
-              keys.forEach(key => {
-                if (!prevKeys.has(key)) {
-                  addedKeys.push(key);
-                  possiblyUpdatedKeys.delete(key);
-                }
-              });
+            const possiblyUpdatedKeys = new Set(Object.keys(value));
 
-              const removedKeys: string[] = [];
-              prevKeys.forEach(prevKey => {
-                if (!keys.has(prevKey)) {
-                  removedKeys.push(prevKey);
-                  possiblyUpdatedKeys.delete(prevKey);
-                }
-              });
-
-              console.log('possiblyUpdatedKeys:', possiblyUpdatedKeys);
-              const updatedKeys: string[] = [];
-              possiblyUpdatedKeys.forEach(possiblyUpdatedKey => {
-                const prevKeyValue = prevValue[possiblyUpdatedKey];
-                const keyValue = snapshot(value[possiblyUpdatedKey]);
-                if (prevKeyValue !== keyValue) {
-                  updatedKeys.push(possiblyUpdatedKey);
-                }
-              });
-
-              prevValue = snapshot(value);
-
-              if (
-                addedKeys.length ||
-                removedKeys.length ||
-                updatedKeys.length
-              ) {
-                const write: Write = async () => {
-                  console.log(
-                    JSON.stringify(
-                      {
-                        addedKeys,
-                        removedKeys,
-                        updatedKeys
-                      },
-                      null,
-                      2
-                    )
-                  );
-
-                  await Promise.all([
-                    ...removedKeys.map(key => {
-                      inputs.getStorage().removeItem(filePath + '.' + key);
-                    }),
-
-                    ...[...addedKeys, ...updatedKeys].map(key => {
-                      inputs
-                        .getStorage()
-                        .setItem(
-                          filePath + '.' + key,
-                          JSON.stringify(value[key])
-                        );
-                    })
-                  ]);
-                };
-
-                onBeforeWrite(write, path);
+            const addedKeys: string[] = [];
+            keys.forEach(key => {
+              if (!prevKeys.has(key)) {
+                addedKeys.push(key);
+                possiblyUpdatedKeys.delete(key);
               }
+            });
+
+            const removedKeys: string[] = [];
+            prevKeys.forEach(prevKey => {
+              if (!keys.has(prevKey)) {
+                removedKeys.push(prevKey);
+                possiblyUpdatedKeys.delete(prevKey);
+              }
+            });
+
+            const updatedKeys: string[] = [];
+            possiblyUpdatedKeys.forEach(possiblyUpdatedKey => {
+              const prevKeyValue = prevValue[possiblyUpdatedKey];
+              const keyValue = value[possiblyUpdatedKey];
+              if (prevKeyValue !== keyValue) {
+                updatedKeys.push(possiblyUpdatedKey);
+              }
+            });
+
+            prevValue =
+              pathKey === undefined
+                ? snapshot(proxyObject)
+                : snapshot(proxySubObject[pathKey]);
+
+            if (addedKeys.length || removedKeys.length || updatedKeys.length) {
+              console.log(
+                JSON.stringify({ addedKeys, removedKeys, updatedKeys }, null, 2)
+              );
+
+              removedKeys.forEach(key => {
+                pendingWrites[filePath + '.' + key] = null;
+              });
+
+              [...addedKeys, ...updatedKeys].forEach(key => {
+                pendingWrites[filePath + '.' + key] = value[key];
+              });
+
+              onBeforeBulkWrite(bulkWrite);
             }
-          );
+          };
+          if (pathKey === undefined) {
+            subscribe(proxyObject, persistLeaf);
+          } else {
+            subscribeKey(proxySubObject, pathKey, persistLeaf);
+          }
         } else {
           throw new Error(
-            `Unknown persist technique of "${technique}" for path "${filePath}".`
+            `Unknown persist strategy of "${strategy}" for path "${filePath}".`
           );
         }
       })
