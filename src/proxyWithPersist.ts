@@ -21,19 +21,17 @@ type Write = () => ReturnType<ProxyPersistStorageEngine['setItem']>;
 type BulkWrite = () => Promise<Array<ReturnType<Write>>>;
 type OnBeforeBulkWrite = (bulkWrite: BulkWrite) => void;
 type OnBeforeWrite = (write: Write, path: string) => void;
-
+type Version = number;
 interface IProxyWithPersistInputs<S extends object> {
   name: string;
-  version: number;
+  version: Version;
   getStorage: () => ProxyPersistStorageEngine;
   persistStrategies:
     | PersistStrategy
     | {
         [key: string]: PersistStrategy;
       };
-  migrate: {
-    [key: number]: () => null;
-  };
+  migrate: Record<Version, (() => Promise<void> | void) | undefined>;
   onBeforeWrite?: OnBeforeWrite;
   onBeforeBulkWrite?: OnBeforeBulkWrite;
   initialState: S;
@@ -173,8 +171,10 @@ export default function proxyWithPersist<S extends object>(
 
           if (isPersistingMainObject) {
             subscribe(proxyObject, ops => {
+              // if (!proxyObject._persist.loaded) {
+              //   return;
+              // }
               if (ops.every(op => op[1][0] === '_persist')) {
-                console.log('all are _persist, dont persist');
                 return;
               }
               persistPath(proxyObject);
@@ -191,12 +191,6 @@ export default function proxyWithPersist<S extends object>(
               })
               .filter(persistedFilePath => {
                 if (isPersistingMainObject) {
-                  console.log(
-                    'is filePath:',
-                    filePath,
-                    'vs',
-                    persistedFilePath
-                  );
                   return persistedFilePath.split('-')[0] === inputs.name;
                 } else {
                   return (
@@ -206,11 +200,6 @@ export default function proxyWithPersist<S extends object>(
                 }
               })
               .map(async persistedFilePath => {
-                console.log('persistedFilePath:', persistedFilePath, {
-                  toPath: toPath(persistedFilePath),
-                  sliced: toPath(persistedFilePath).slice(0, -1)
-                });
-
                 const persistedString = await inputs
                   .getStorage()
                   .getItem(persistedFilePath);
@@ -219,7 +208,6 @@ export default function proxyWithPersist<S extends object>(
                     `Could not find file for leafPath found of "${persistedFilePath}", this should not be possible as this was returned by inputs.getStorage().getAllKeys`
                   );
                 }
-                console.log('persistedString:', persistedString);
 
                 const persistedValue = JSON.parse(persistedString);
 
@@ -303,6 +291,9 @@ export default function proxyWithPersist<S extends object>(
           };
           if (isPersistingMainObject) {
             subscribe(proxyObject, function (ops) {
+              // if (!proxyObject._persist.loaded) {
+              //   return;
+              // }
               if (ops.every(op => op[1][0] === '_persist')) {
                 console.log('all are _persist, dont persist');
                 return;
@@ -319,6 +310,48 @@ export default function proxyWithPersist<S extends object>(
         }
       })
     );
+
+    // migration
+    type PersistData = {
+      version: number;
+    };
+    const metaFilePath = inputs.name + '-_persist';
+    const metaPersistedString = await inputs.getStorage().getItem(metaFilePath);
+    const metaPersistedData: null | PersistData = metaPersistedString
+      ? JSON.parse(metaPersistedString)
+      : null;
+
+    if (metaPersistedData) {
+      if (metaPersistedData.version < inputs.version) {
+        for (
+          let currentVersion = metaPersistedData.version + 1;
+          currentVersion <= inputs.version;
+          currentVersion++
+        ) {
+          const migration = inputs.migrate[currentVersion];
+          console.log(
+            'currentVersion:',
+            currentVersion,
+            'migration:',
+            migration
+          );
+
+          if (migration) {
+            await migration();
+          }
+        }
+      }
+    }
+
+    if (metaPersistedData?.version !== inputs.version) {
+      console.log('writing metaPersist');
+      await inputs.getStorage().setItem(
+        metaFilePath,
+        JSON.stringify({
+          version: inputs.version
+        } as PersistData)
+      );
+    }
 
     Object.assign(proxyObject._persist, {
       loaded: true,

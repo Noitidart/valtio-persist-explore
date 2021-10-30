@@ -38,14 +38,28 @@ const stateProxy = proxyWithPersist({
   onBeforeBulkWrite: debounce(bulkWrite => bulkWrite(), 1000, {
     maxWait: 1000
   }),
-  version: 0,
+  version: 21,
   // persistStrategies: PersistStrategy.SingleFile,
   persistStrategies: {
     count: PersistStrategy.SingleFile,
     photos: PersistStrategy.MultiFile
   },
   initialState,
-  migrate: {}
+  migrate: {
+    16: () => {
+      stateProxy.photos.addedInV16 = {
+        id: 'addedInV16',
+        createdAt: 100,
+        clicks: 10
+      };
+    },
+    20: () => {
+      stateProxy.photos.addedInV16.clicks = 20;
+    },
+    21: () => {
+      stateProxy.photos.addedInV16.clicks = 21;
+    }
+  }
 });
 
 function App() {
