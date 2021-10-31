@@ -33,7 +33,7 @@ interface IProxyWithPersistInputs<S extends object> {
     | {
         [key: string]: PersistStrategy;
       };
-  migrate: Record<Version, (() => Promise<void> | void) | undefined>;
+  migrations: Record<Version, (() => Promise<void> | void) | undefined>;
   onBeforeWrite?: OnBeforeWrite;
   onBeforeBulkWrite?: OnBeforeBulkWrite;
   initialState: S;
@@ -332,7 +332,7 @@ export default function proxyWithPersist<S extends object>(
           currentVersion <= inputs.version;
           currentVersion++
         ) {
-          const migration = inputs.migrate[currentVersion];
+          const migration = inputs.migrations[currentVersion];
           console.log(
             'currentVersion:',
             currentVersion,

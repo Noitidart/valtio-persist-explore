@@ -58,7 +58,7 @@ const stateProxy = proxyWithPersist({
     photos: PersistStrategy.MultiFile
   },
   initialState,
-  migrate: {
+  migrations: {
     16: () => {
       stateProxy.photos.addedInV16 = {
         id: 'addedInV16',

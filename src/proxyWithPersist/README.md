@@ -9,13 +9,15 @@ import proxyWithPersist, { PersistStrategy } from 'valtio-persist';
 import { subscribeKey } from 'valtio/utils';
 
 const appStateProxy = proxyWithPersist({
+  // must be unique, files/paths will be created with this prefix
+  name: 'appState',
+
   initialState: {
     counter: 0
   },
-  version: 0,
-  name: 'appState',
   persistStrategies: PersistStrategy.SingleFile,
-  migrate: {},
+  version: 0,
+  migrations: {},
 
   // see "Storage Engine" section below
   getStorage: () => storage
