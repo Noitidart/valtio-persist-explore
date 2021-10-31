@@ -1,6 +1,6 @@
 import './App.css';
 
-import { debounce, uniqueId } from 'lodash';
+import { throttle, uniqueId } from 'lodash';
 import { useSnapshot } from 'valtio';
 
 import proxyWithPersist, {
@@ -32,12 +32,25 @@ const initialState: {
     }
   }
 };
+
+const onBeforeBulkWrite = throttle(bulkWrite => bulkWrite(), 1000, {
+  leading: false
+});
+
+window.addEventListener('blur', () => {
+  console.log('flushing due to blur');
+  onBeforeBulkWrite.flush();
+});
+
+window.addEventListener('beforeunload', function (e) {
+  console.log('flushing due to before unload');
+  onBeforeBulkWrite.flush();
+});
+
 const stateProxy = proxyWithPersist({
   name: 'app',
   getStorage: () => storage,
-  onBeforeBulkWrite: debounce(bulkWrite => bulkWrite(), 1000, {
-    maxWait: 1000
-  }),
+  onBeforeBulkWrite,
   version: 21,
   // persistStrategies: PersistStrategy.SingleFile,
   persistStrategies: {
