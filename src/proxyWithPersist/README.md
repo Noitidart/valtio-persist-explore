@@ -184,9 +184,7 @@ Now adding a photo with key `5` and value of `{id: 5, views: 0 }` will only stri
 
 ## Whitelisting
 
-To only persist certain keys, define an object for the `persistStrategies` option. The keys of this object are dot path notation for the paths you want to store.
-
-### Example:
+To only persist certain keys, define an object for the `persistStrategies` option. The keys of this object are dot path notation for the paths you want to store. Here is an example:
 
 ```typescript
 const stateProxy = proxyWithPersist({
