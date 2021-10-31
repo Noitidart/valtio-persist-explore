@@ -245,7 +245,34 @@ In this example, only `stateProxy.entities.tasks` will get persisted. Any change
 
 ## Migrations
 
-TODO
+The two keys in the config argument of `proxyWithPersist` related to migrations are `version` and `migrations`.
+
+The `version` is required and must be a number. Any time persisted data is loaded, it compares the persisted version, to the current version passed into `proxyWithPersist` argument. If the persisted version is less than the one passed in to the argument, `migrations` will then be run in ascending order of numbered key.
+
+The `migrations` option must be an object where each key is a version. The value is an async function, it receives no arguments, and returns nothing, it just mutates the proxy object. All the migrations will be run that have a number key that is greater than persisted version and less-than-or-equal-to the `version` passed into `proxyWithPersist`.
+
+Example:
+
+The last persisted version was `0`.
+
+```typescript
+const stateProxy = proxyWithPersist({
+  // ...
+
+  version: 2,
+  migrations: {
+    1: async () => {
+      stateProxy.counter = {};
+    },
+
+    2: async () => {
+      delete stateProxy.foo;
+    }
+  }
+});
+```
+
+When the app runs, it finds the last persisted version was `0`, but the current version is `2`. It will first run migration with key of `1` and then it will run migration with key of `2` and then `_persist.loaded` will be set to `true`.
 
 ## Recipes
 
