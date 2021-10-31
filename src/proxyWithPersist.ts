@@ -25,7 +25,9 @@ type Version = number;
 interface IProxyWithPersistInputs<S extends object> {
   name: string;
   version: Version;
-  getStorage: () => ProxyPersistStorageEngine;
+  getStorage: () =>
+    | ProxyPersistStorageEngine
+    | Promise<ProxyPersistStorageEngine>;
   persistStrategies:
     | PersistStrategy
     | {
@@ -81,44 +83,46 @@ export default function proxyWithPersist<S extends object>(
     }
   });
 
-  // key is path, value is un-stringified value. stringify happens at time of write
-  const pendingWrites: Record<string, any> = {};
-
-  const bulkWrite = () =>
-    Promise.all(
-      Object.entries(pendingWrites).map(([filePath, value]) => {
-        // TODO: if removeItem/setItem fails, and pendingWrites doesn't include
-        // filePath, then restore this. if it includes it on error, it means
-        // another write/delete got queued up, and that takes precedence.
-        delete pendingWrites[filePath];
-
-        let write: Write;
-        if (value === null) {
-          // delete it
-          write = () => {
-            console.log('deleting filePath:', filePath);
-            return inputs.getStorage().removeItem(filePath);
-          };
-        } else {
-          write = () => {
-            console.log('writing filePath:', filePath, 'value:', value);
-            return inputs.getStorage().setItem(filePath, JSON.stringify(value));
-          };
-        }
-        return onBeforeWrite(write, filePath);
-      })
-    );
-
-  const onBeforeBulkWrite: OnBeforeBulkWrite =
-    inputs.onBeforeBulkWrite || (bulkWrite => bulkWrite());
-
   (async function () {
+    const storage = await inputs.getStorage();
+
+    // key is path, value is un-stringified value. stringify happens at time of write
+    const pendingWrites: Record<string, any> = {};
+
+    const bulkWrite = () =>
+      Promise.all(
+        Object.entries(pendingWrites).map(([filePath, value]) => {
+          // TODO: if removeItem/setItem fails, and pendingWrites doesn't include
+          // filePath, then restore this. if it includes it on error, it means
+          // another write/delete got queued up, and that takes precedence.
+          delete pendingWrites[filePath];
+
+          let write: Write;
+          if (value === null) {
+            // delete it
+            write = () => {
+              console.log('deleting filePath:', filePath);
+              return storage.removeItem(filePath);
+            };
+          } else {
+            write = () => {
+              console.log('writing filePath:', filePath, 'value:', value);
+              return storage.setItem(filePath, JSON.stringify(value));
+            };
+          }
+          return onBeforeWrite(write, filePath);
+        })
+      );
+
+    const onBeforeBulkWrite: OnBeforeBulkWrite =
+      inputs.onBeforeBulkWrite || (bulkWrite => bulkWrite());
+
     const allKeys =
       inputs.persistStrategies === PersistStrategy.MultiFile ||
       Object.values(inputs.persistStrategies).includes(
         PersistStrategy.MultiFile
       )
-        ? await inputs.getStorage().getAllKeys()
+        ? await storage.getAllKeys()
         : [];
 
     await Promise.all(
@@ -140,7 +144,7 @@ export default function proxyWithPersist<S extends object>(
             : get(proxyObject, pathStart);
 
         if (strategy === PersistStrategy.SingleFile) {
-          const persistedString = await inputs.getStorage().getItem(filePath);
+          const persistedString = await storage.getItem(filePath);
           console.log('persistedString:', persistedString);
 
           if (persistedString === null) {
@@ -200,12 +204,12 @@ export default function proxyWithPersist<S extends object>(
                 }
               })
               .map(async persistedFilePath => {
-                const persistedString = await inputs
-                  .getStorage()
-                  .getItem(persistedFilePath);
+                const persistedString = await storage.getItem(
+                  persistedFilePath
+                );
                 if (persistedString === null) {
                   throw new Error(
-                    `Could not find file for leafPath found of "${persistedFilePath}", this should not be possible as this was returned by inputs.getStorage().getAllKeys`
+                    `Could not find file for leafPath found of "${persistedFilePath}", this should not be possible as this was returned by storage.getAllKeys`
                   );
                 }
 
@@ -316,7 +320,7 @@ export default function proxyWithPersist<S extends object>(
       version: number;
     };
     const metaFilePath = inputs.name + '-_persist';
-    const metaPersistedString = await inputs.getStorage().getItem(metaFilePath);
+    const metaPersistedString = await storage.getItem(metaFilePath);
     const metaPersistedData: null | PersistData = metaPersistedString
       ? JSON.parse(metaPersistedString)
       : null;
@@ -345,7 +349,7 @@ export default function proxyWithPersist<S extends object>(
 
     if (metaPersistedData?.version !== inputs.version) {
       console.log('writing metaPersist');
-      await inputs.getStorage().setItem(
+      await storage.setItem(
         metaFilePath,
         JSON.stringify({
           version: inputs.version
