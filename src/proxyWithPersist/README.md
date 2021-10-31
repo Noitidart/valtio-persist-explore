@@ -38,6 +38,19 @@ You can read from `appStateProxy` immediately, however if you want changes persi
 
 This is obvious but to be safe, keep in mind the base value (`initialState`) must be an object. This applies to `proxy` as well from valtio, the argument to `proxy` is an object.
 
+Every object returned by `proxyWithPersist` gets a special `_persist` key added to it. This key has the value of:
+
+```typescript
+{
+  status: 'loading' | 'loaded' | 'error';
+  loading: boolean;
+  loaded: boolean;
+  error: null | Error;
+}
+```
+
+You can use this section to figure out when loading has completed.
+
 ## Storage Engine
 
 You can use any storage engine as long as it respects the following interface:
