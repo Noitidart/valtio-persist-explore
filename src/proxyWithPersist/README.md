@@ -5,7 +5,7 @@
 ### Basic (Quick Start)
 
 ```typescript
-import proxyWithPersist from 'valtio-persist';
+import proxyWithPersist, { PersistStrategy } from 'valtio-persist';
 import { subscribeKey } from 'valtio/utils';
 
 const appStateProxy = proxyWithPersist({
@@ -31,6 +31,8 @@ subscribeKey(appStateProxy._persist, 'loaded', loaded => {
   }
 });
 ```
+
+This will persist the entire object into one file, on every change.
 
 You can read from `appStateProxy` immediately, however if you want changes persisted, wait until `appStateProxy._persist.loaded` goes to `true`.
 
@@ -117,4 +119,55 @@ const storage: ProxyPersistStorageEngine = {
 const stateProxy = proxyWithPersist({
   getStorage: () => storage;
 });
+```
+
+## Persist Strategies
+
+There are two
+
+## Whitelisting
+
+To only persist certain keys, define an object for the `persistStrategies` option. The keys of this object are dot path notation for the paths you want to store.
+
+### Example:
+
+```typescript
+const stateProxy = proxyWithPersist({
+  // ...
+
+  initialState: {
+    entities: {
+      tasks: {},
+      schedules: {}
+    }
+  },
+
+  persistStrategies: {
+    'entities.tasks': PersistStrategy.SingleFile
+  }
+});
+```
+
+In this example, only `stateProxy.entities.tasks` will get persisted. Any changes to `stateProxy.entities.schedules` or anywhere else, will not get persisted.
+
+## Recipes
+
+### Throttle Writes for Performance
+
+Sometimes, writing to disk on every change immediately hurts performance. Here is a technique to changes get persisted at most once a second. It uses the [`throttle`](https://lodash.com/docs/4.17.15#throttle) method from lodash. It will save to disk at most once a second.
+
+Note: Debounce is not recommended as it could lead to starvation. For example, if writes are debounced to 1 second, but writes happen after 0.5s, then a write will never happen.
+
+```
+npm i lodash
+```
+
+```typescript
+import { throttle } from 'lodash';
+
+const stateProxy = proxyWithPersist({
+  // ...
+
+  onBeforeBulkWrite: throttle(bulkWrite => bulkWrite(), 1000)
+}
 ```
