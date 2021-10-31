@@ -163,7 +163,7 @@ const stateProxy = proxyWithPersist({
     }
   }
 
-  persistStrategy: {
+  persistStrategies: {
     photos: PersistStrategy.SingleFile
   }
 })
@@ -188,7 +188,7 @@ const stateProxy = proxyWithPersist({
     }
   }
 
-  persistStrategy: {
+  persistStrategies: {
 -    photos: PersistStrategy.SingleFile
 +    photos: PersistStrategy.MultiFile
   }
