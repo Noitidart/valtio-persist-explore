@@ -57,7 +57,9 @@ export type ProxyPersistStorageEngine = {
 
 `getAllKeys` is used for the `PersistStrategy.MultiFile`. If you do not use this strategy, then you can make this function no-op.
 
-### [`window.localStorage`](https://developer.mozilla.org/en-US/docs/Web/API/Window/localStorage)
+### `window.localStorage`
+
+Documentation on `window.localStorage` can be found here: https://developer.mozilla.org/en-US/docs/Web/API/Window/localStorage.
 
 ```typescript
 import proxyWithPersist from 'valtio-persist';
@@ -75,7 +77,9 @@ const stateProxy = proxyWithPersist({
 });
 ```
 
-### [`@react-native-async-storage/async-storage`](https://github.com/react-native-async-storage/async-storage)
+### `@react-native-async-storage/async-storage`
+
+Documentation on `AsyncStorage` can be found here: https://github.com/react-native-async-storage/async-storage.
 
 ```
 npm i @react-native-async-storage/async-storage
@@ -98,7 +102,9 @@ const stateProxy = proxyWithPersist({
 });
 ```
 
-### [`expo-file-system`](https://docs.expo.dev/versions/latest/sdk/filesystem/#filesystemdocumentdirectory)
+### `expo-file-system`
+
+Documentation on `expo-file-system` can be found here: https://docs.expo.dev/versions/latest/sdk/filesystem.
 
 ```
 expo install expo-file-system
