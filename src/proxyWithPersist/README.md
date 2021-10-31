@@ -203,6 +203,10 @@ const stateProxy = proxyWithPersist({
 
 In this example, only `stateProxy.entities.tasks` will get persisted. Any changes to `stateProxy.entities.schedules` or anywhere else, will not get persisted.
 
+## Migrations
+
+TODO
+
 ## Recipes
 
 ### Throttle Writes for Performance
