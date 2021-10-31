@@ -2,9 +2,7 @@
 
 `npm i valtio-persist` allows flexible and performant saving of state to disk.
 
-## Usage
-
-### Basic (Quick Start)
+## Quick Start - Basic Usage
 
 ```typescript
 import proxyWithPersist, { PersistStrategy } from 'valtio-persist';
