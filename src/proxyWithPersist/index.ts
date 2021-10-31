@@ -37,6 +37,9 @@ interface IProxyWithPersistInputs<S extends object> {
   onBeforeWrite?: OnBeforeWrite;
   onBeforeBulkWrite?: OnBeforeBulkWrite;
   initialState: S;
+  logger?: {
+    error: (error: Error, extra: {}) => void;
+  };
 }
 
 type IPersistedState<State extends object> = {
@@ -83,6 +86,8 @@ export default function proxyWithPersist<S extends object>(
     }
   });
 
+  const loadErrors: Error[] = [];
+
   (async function () {
     const storage = await inputs.getStorage();
 
@@ -97,19 +102,25 @@ export default function proxyWithPersist<S extends object>(
           // another write/delete got queued up, and that takes precedence.
           delete pendingWrites[filePath];
 
-          let write: Write;
-          if (value === null) {
-            // delete it
-            write = () => {
-              console.log('deleting filePath:', filePath);
-              return storage.removeItem(filePath);
-            };
-          } else {
-            write = () => {
-              console.log('writing filePath:', filePath, 'value:', value);
-              return storage.setItem(filePath, JSON.stringify(value));
-            };
-          }
+          const write: Write = () => {
+            try {
+              if (value === null) {
+                console.log('deleting filePath:', filePath);
+                return storage.removeItem(filePath);
+              } else {
+                console.log('writing filePath:', filePath, 'value:', value);
+                return storage.setItem(filePath, JSON.stringify(value));
+              }
+            } catch (error) {
+              inputs.logger?.error(error as Error, {
+                filePath,
+                operation: value === null ? 'write.removeItem' : 'write.setItem'
+              });
+              if (filePath in pendingWrites === false) {
+                return;
+              }
+            }
+          };
           return onBeforeWrite(write, filePath);
         })
       );
@@ -117,13 +128,20 @@ export default function proxyWithPersist<S extends object>(
     const onBeforeBulkWrite: OnBeforeBulkWrite =
       inputs.onBeforeBulkWrite || (bulkWrite => bulkWrite());
 
-    const allKeys =
-      inputs.persistStrategies === PersistStrategy.MultiFile ||
-      Object.values(inputs.persistStrategies).includes(
-        PersistStrategy.MultiFile
-      )
-        ? await storage.getAllKeys()
-        : [];
+    let allKeys: string[];
+    try {
+      allKeys =
+        inputs.persistStrategies === PersistStrategy.MultiFile ||
+        Object.values(inputs.persistStrategies).includes(
+          PersistStrategy.MultiFile
+        )
+          ? await storage.getAllKeys()
+          : [];
+    } catch (error) {
+      inputs.logger?.error(error as Error, { operation: 'load.getAllKeys' });
+      loadErrors.push(error);
+      return;
+    }
 
     await Promise.all(
       Object.entries(
@@ -144,7 +162,17 @@ export default function proxyWithPersist<S extends object>(
             : get(proxyObject, pathStart);
 
         if (strategy === PersistStrategy.SingleFile) {
-          const persistedString = await storage.getItem(filePath);
+          let persistedString;
+          try {
+            persistedString = await storage.getItem(filePath);
+          } catch (error) {
+            inputs.logger?.error(error as Error, {
+              filePath,
+              operation: 'load.getItem'
+            });
+
+            throw error;
+          }
           console.log('persistedString:', persistedString);
 
           if (persistedString === null) {
@@ -315,53 +343,63 @@ export default function proxyWithPersist<S extends object>(
       })
     );
 
-    // migration
-    type PersistData = {
-      version: number;
-    };
-    const metaFilePath = inputs.name + '-_persist';
-    const metaPersistedString = await storage.getItem(metaFilePath);
-    const metaPersistedData: null | PersistData = metaPersistedString
-      ? JSON.parse(metaPersistedString)
-      : null;
+    if (loadErrors.length === 0) {
+      // migration
+      type PersistData = {
+        version: number;
+      };
+      const metaFilePath = inputs.name + '-_persist';
+      const metaPersistedString = await storage.getItem(metaFilePath);
+      const metaPersistedData: null | PersistData = metaPersistedString
+        ? JSON.parse(metaPersistedString)
+        : null;
 
-    if (metaPersistedData) {
-      if (metaPersistedData.version < inputs.version) {
-        for (
-          let currentVersion = metaPersistedData.version + 1;
-          currentVersion <= inputs.version;
-          currentVersion++
-        ) {
-          const migration = inputs.migrations[currentVersion];
-          console.log(
-            'currentVersion:',
-            currentVersion,
-            'migration:',
-            migration
-          );
+      if (metaPersistedData) {
+        if (metaPersistedData.version < inputs.version) {
+          for (
+            let currentVersion = metaPersistedData.version + 1;
+            currentVersion <= inputs.version;
+            currentVersion++
+          ) {
+            const migration = inputs.migrations[currentVersion];
+            console.log(
+              'currentVersion:',
+              currentVersion,
+              'migration:',
+              migration
+            );
 
-          if (migration) {
-            await migration();
+            if (migration) {
+              await migration();
+            }
           }
         }
       }
+
+      if (metaPersistedData?.version !== inputs.version) {
+        console.log('writing metaPersist');
+        await storage.setItem(
+          metaFilePath,
+          JSON.stringify({
+            version: inputs.version
+          } as PersistData)
+        );
+      }
     }
 
-    if (metaPersistedData?.version !== inputs.version) {
-      console.log('writing metaPersist');
-      await storage.setItem(
-        metaFilePath,
-        JSON.stringify({
-          version: inputs.version
-        } as PersistData)
-      );
+    if (loadErrors.length === 0) {
+      Object.assign(proxyObject._persist, {
+        loaded: true,
+        loading: false,
+        status: 'loaded'
+      });
+    } else {
+      Object.assign(proxyObject._persist, {
+        errors: loadErrors,
+        loading: false,
+        status: 'error'
+      });
     }
-
-    Object.assign(proxyObject._persist, {
-      loaded: true,
-      loading: false,
-      status: 'loaded'
-    });
   })();
 
   return proxyObject;
