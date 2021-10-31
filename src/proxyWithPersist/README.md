@@ -70,6 +70,27 @@ export type ProxyPersistStorageEngine = {
 
 `getAllKeys` is used for the `PersistStrategy.MultiFile`. If you do not use this strategy, then you can make this function no-op.
 
+To use this engine, set the `getStorage` option to a function that returns this. It can be async, it is only run once.
+
+```typescript
+
+const stateProxy = proxyWithPersist({
+  // ...
+  getStorage: async () => {
+
+    // do some async stuff, maybe create a directory you want to store this into
+
+    // return storage interface
+    return {
+      getItem: () => { ... },
+      setItem: () => { ... },
+      removeItem: () => { ... },
+      getAllKeys: () => { ... }
+    }
+  }
+})
+```
+
 ### `window.localStorage`
 
 Documentation on `window.localStorage` can be found here: https://developer.mozilla.org/en-US/docs/Web/API/Window/localStorage.
