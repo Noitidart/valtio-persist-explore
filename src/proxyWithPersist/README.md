@@ -144,7 +144,9 @@ const stateProxy = proxyWithPersist({
 
 There are two techniques to persist, "single file" (`PersistStrategy.SingleFile`) or "multi-file" (`PersistStrategy.MultiFile`).
 
-This will stringify the value and store it into one file.
+### Single File
+
+The single file strategy will stringify the value and store it into one file.
 
 In the example here, any time a photo is added, or removed, or a key in the photo is updated, `JSON.stringify` runs on the entire `photos` object, and then this is written to file.
 
@@ -166,6 +168,8 @@ const stateProxy = proxyWithPersist({
   }
 })
 ```
+
+### Multi-file
 
 There is a second strategy called multi-file. This can only be used on keys that have an object-type value. Each key in the object will be turned into a file. This offers improved performance, because the entire value of of the object is not stringified, just individual values of the keys in the object are stringified, and then written to its own file.
 
