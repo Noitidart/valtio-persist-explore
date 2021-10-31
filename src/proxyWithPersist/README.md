@@ -123,7 +123,56 @@ const stateProxy = proxyWithPersist({
 
 ## Persist Strategies
 
-There are two
+There are two techniques to persist, "single file" (`PersistStrategy.SingleFile`) or "multi-file" (`PersistStrategy.MultiFile`).
+
+This will stringify the value and store it into one file.
+
+In the example here, any time a photo is added, or removed, or a key in the photo is updated, `JSON.stringify` runs on the entire `photos` object, and then this is written to file.
+
+```typescript
+const stateProxy = proxyWithPersist({
+  // ...
+
+  initialState: {
+    photos: {
+      1: { id: 1, views: 0 },
+      2: { id: 2, views: 0 },
+      3: { id: 3, views: 0 },
+      4: { id: 4, views: 0 }
+    }
+  }
+
+  persistStrategy: {
+    photos: PersistStrategy.SingleFile
+  }
+})
+```
+
+There is a second strategy called multi-file. This can only be used on keys that have an object-type value. Each key in the object will be turned into a file. This offers improved performance, because the entire value of of the object is not stringified, just individual values of the keys in the object are stringified, and then written to its own file.
+
+In the example above, `photos` has an object-type value, so let's use multi-file strategy here.
+
+```diff
+const stateProxy = proxyWithPersist({
+  // ...
+
+  initialState: {
+    photos: {
+      1: { id: 1, views: 0 },
+      2: { id: 2, views: 0 },
+      3: { id: 3, views: 0 },
+      4: { id: 4, views: 0 }
+    }
+  }
+
+  persistStrategy: {
+-    photos: PersistStrategy.SingleFile
++    photos: PersistStrategy.MultiFile
+  }
+})
+```
+
+Now adding a photo with key `5` and value of `{id: 5, views: 0 }` will only stringify this value and write it to disk. Updating the `photos['2'].views` to value of `99` will only stringify the photo at this position, and write it to it's individual file.
 
 ## Whitelisting
 
